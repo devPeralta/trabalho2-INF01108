@@ -5,36 +5,75 @@
     LF		equ		0ah
 .data
 
-    
-    Texto1	            db		"Texto numero 1",0
-    Texto2	            db		"Hello World",0
+    ;;strings inicializadas
+    Texto1	            db		"Primeira letra do arquivo: ",0
+    Texto2	            db		"Segunda letra do arquivo: ",0
     msgCRLF				db	    CR, LF, 0
+    ;;variaveis auxiliares
     auxdb       		db		0	            ; variavel auxiliar byte
     auxdw               dw      0               ; variavel auxiliar word
+    ;;variaveis da linha de comando
     commandLine         db		256 dup (?)		; linha de comando
     fileNameIn          db		256 dup (?)		; arquivodeentrada.txt
     fileNameOut         db		256 dup (?)		; arquivodesaida.txt
+    fileNumLet          db      256 dup (?)     ; string (numero) do tamanho do grupo de letras
+    fileAtcg            db      256 dup (?)     ; codigo atcg+
+    ;;
+    fileHandle		    dw		0				; Handler do arquivo
+    fileByteBuffer      db      0    
+    ;;variaveis que armazenam as quantidades das bases nitrogenadas lidas
+    counterA            db      0       
+    counterT            db      0
+    counterC            db      0
+    counterG            db      0
+    ;;flags do codigo atcg+ 
+    ;flagA               db      0
+    ;flagT               db      0
+    ;flagC               db      0
+    ;flagG               db      0
+    ;flag+               db      0 
+
+    ;;flag para subtrair 1 na contagem da letra que saiu do gap do grupo de letras (primeira letra do grupo anterior)
+    ;;0 = erro ; 1 = letra A ; 2 = letra T ; 3 = letra C ; 4 = letra G
+    flagLastChar        db      0   
+
 
 .code
 .startup
-
-    call    getCommandLine  ;salva string digitada na linha de comando na variavel commandLine
-    ;lea     bx,commandLine
-    ;call    printf_s
     
+    ;;separa cada informacao da linha de comando em variaveis diferentes
+    call    getCommandLine  ;salva string digitada na linha de comando na variavel commandLine
     call    getFileNameIn   ;salva nome do arquivo de entrada em fileNameIn
-    ;lea     bx,fileNameIn
-    ;call    printf_s
-
-    ;lea     bx,msgCRLF
-    ;call    printf_s
-
-    call    getFileNameOut
-    ;lea     bx,fileNameOut
-    ;call    printf_s
+    call    getFileNameOut  ;salva nome do arquivo de saida em fileNameOut
+    call    getNumLet       ;salva numero do grupo de letras em fileNumLet e codigo atcg em fileAtcg
 
 
+    ;;teste leitura file
+    call    openFile    ;abre arquivo fileNameIn
+    call    readFile    ;retorna byte lido em fileByteBuffer
 
+    ;; print: primeiras duas letras do arquivo de entrada
+    lea     bx,Texto1
+    call    printf_s
+    lea     bx,fileByteBuffer
+    call    printf_s
+    lea     bx,msgCRLF
+    call    printf_s
+    lea     bx,Texto2
+    call    printf_s
+    call    readFile    ;retorna byte lido em fileByteBuffer
+    lea     bx,fileByteBuffer
+    call    printf_s
+    lea     bx,msgCRLF
+    call    printf_s
+
+    ;; print: letras e atcg
+    lea     bx,fileNumLet
+    call    printf_s
+    lea     bx,msgCRLF
+    call    printf_s
+    lea     bx,fileAtcg
+    call    printf_s
 
 .exit
 ;----------------------------------------------------------------------
@@ -124,7 +163,7 @@ getFileNameIn   endp
 ;--------------------------------------------------------------------
 ;Funcao que salva o nome do arquivo de saida na variavel fileNameOut
 ;--------------------------------------------------------------------
-getfileNameOut  proc    near
+getFileNameOut  proc    near
 
     mov     SI, OFFSET commandLine
     lea     BP,fileNameOut
@@ -162,5 +201,89 @@ getfileNameOut  proc    near
     fimGetFileNameOut:	
     ret
 
-getfileNameOut  endp
+getFileNameOut  endp
+;
+;--------------------------------------------------------------------
+;Funcao que salva o numero do grupo de letras & codigo atcg+
+;--------------------------------------------------------------------
+getNumLet   proc    near
+    mov     SI, OFFSET commandLine
+    lea     BP,fileNumLet
+    loopHifenNum:
+    LODSB
+    cmp     al,0 
+    je      fimGetNumLet  
+    mov     auxdb,al
+    cmp     auxdb,'-'
+    je      hifenNum
+    jmp     loopHifenNum
+    
+    hifenNum:
+    LODSB
+    mov     auxdb,al
+    cmp     auxdb,'n'
+    je      lefileNum
+    jmp     loopHifenNum
+
+    leFileNum:
+    LODSB
+    loopLeFileNum:
+    LODSB
+    mov     auxdb,al
+    cmp     auxdb,' '
+    je      fimGetNumLet 
+    cmp     auxdb,0
+    je      fimGetNumLet 
+
+    mov     [BP],al
+    add     bp,1
+
+    jmp     loopLeFileNum
+
+    fimGetNumLet:
+    lea     BP,fileAtcg
+    loopNumLet:
+    LODSB
+    ;LODSB
+    ;TO DO: precisa sair do looping e retornar algum erro caso seja digitado -n e nao seja digitada o codigo atcg, caso contrario entrara em looping infinito
+    mov     auxdb,al
+    cmp     auxdb,'-'
+    jne     loopNumLet
+    loopAtcgRead:
+    LODSB
+    mov     auxdb,al
+    cmp     auxdb,' '
+    je      fimfimGetNumLet
+    mov     [BP],al
+    add     bp,1
+    jmp     loopAtcgRead    
+
+    fimfimGetNumLet:
+    ret
+getNumLet   endp
+;
+;--------------------------------------------------------------------
+; Função para abrir arquivo com nome em fileNameIn e handle do arquivo em fileHandle
+;--------------------------------------------------------------------
+openFile    proc    near
+    lea		dx,fileNameIn
+    mov		ah,3dh  
+    int		21h
+    mov		fileHandle,ax  
+    ;mov		bx,fileHandle
+ret
+openFile    endp
+;
+;--------------------------------------------------------------------
+; Função teste
+;--------------------------------------------------------------------
+readFile    proc    near
+    mov     ah,3fh
+    mov     bx,fileHandle
+    mov     cx,1
+    lea     dx,fileByteBuffer
+    int     21h
+ret
+readFile    endp
+;
 end
