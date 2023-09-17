@@ -1,18 +1,34 @@
 .model small
 
 .stack
-    CR		equ		0dh
-    LF		equ		0ah
-    SC      equ     03bH
-.data
+    CR		equ		0dh     ; carriage return
+    LF		equ		0ah     ; linefeed
+    SC      equ     3bH     ; ascii ';'
+    PL      equ     2bH     ; ascii '+'
 
-    ;;strings inicializadas
-    Texto1	            db		"Primeira letra do arquivo: ",0
-    Texto2	            db		"Segunda letra do arquivo: ",0
-    msgCRLF				db	    CR, LF, 0
-    semicolon           db      SC, 0
-    vacuo               db      "   ", 0
-    ;;variaveis auxiliares
+.data
+;----------------------------------------------------------------------------------------
+;-------------------------------------- VARIAVEIS ---------------------------------------
+;----------------------------------------------------------------------------------------
+
+    ;;mensagens de erro
+    naoEncontrado       db		" nao encontrado.",CR,LF,0
+    smallFilePrint      db		"ERRO: Arquivo muito pequeno. Minimo de letras necessarias no arquivo: ",0
+    msgFileInEmpty      db      "ERRO: Arquivo de entrada nao informado.",CR,LF,0
+    msgFileOutEmpty     db      "ERRO: Arquivo de saida nao informado.",CR,LF,0
+    strLetError1        db      "ERRO: Letra ",0
+    strLetError2        db      " encontrada no arquivo de entrada.",0
+    bigFilePrint        db      "Erro: Arquivo muito grande.",0
+    ;;cabecalho do arquivo de saida
+    headerA	            db		"A",SC,0
+    headerT	            db		"T",SC,0
+    headerC	            db		"C",SC,0
+    headerG	            db		"G",SC,0
+    headerPlus1	        db		"A+T",SC,0
+    headerPlus2	        db		"C+G",CR,LF,0
+    ;;strings especiais e auxiliares
+    msgCRLF				db	    CR, LF, 0       ; nova linha
+    semicolon           db      SC, 0           ; ponto e virgula
     auxdb       		db		0	            ; variavel auxiliar byte
     auxdw               dw      0               ; variavel auxiliar word
     ;;variaveis da linha de comando
@@ -22,60 +38,99 @@
     fileNumLet          db      256 dup (?)     ; string (numero) do tamanho do grupo de letras
     fileAtcg            db      256 dup (?)     ; codigo atcg+
     fileIntNumLet       dw      0               ; fileIntNumLet = atoi(fileNumLet)
-    ;;
-    fileHandle		    dw		0				; Handler do arquivo
-    fileByteBuffer      dw      0    
+    ;;variaveis de arquivo
+    fileHandle		    dw		0				; handler do arquivo
+    fileByteBuffer      dw      0               ; byte lido no arquivo
+    noFileName          db      "a.out", 0      ; arquivo de saida default 
+    flagNoFileOut       db      0               ; flag que informa se foi informado um arquivo de saida
+    flagFileInEmpty     db      0               ; flag que informa se o arquivo de entrada foi informado
+    flagFileOutEmpty    db      0               ; flag que informa se o arquivo de saida foi informado
+    ;;flags ATCG para verificar se a letra foi requisitada
+    flagA               db      0
+    flagT               db      0
+    flagC               db      0
+    flagG               db      0
+    flagPlus            db      0
     ;;variaveis que armazenam as quantidades das bases nitrogenadas lidas
     counterA            dw      0       
     counterT            dw      0
     counterC            dw      0
     counterG            dw      0
+    counterAT           dw      0
+    counterCG           dw      0
     ;;strings dos contadores atcg
-    numA               db      20 dup (?)
-    numT               db      20 dup (?)
-    numC               db      20 dup (?)
-    numG               db      20 dup (?)
-    ;;flag para subtrair 1 na contagem da letra que saiu do gap do grupo de letras (primeira letra do grupo anterior)
-    ;;0 = erro ; 1 = letra A ; 2 = letra T ; 3 = letra C ; 4 = letra G
-    
-
-    ;;
-    deslocamento        dw      0
-    posFirstChar        dw      0
-    currentPos          dw      2
-    firstChar           db      0
-    contLoopFirstGroup  dw      -1
-
+    numA                db      20 dup (?)
+    numT                db      20 dup (?)
+    numC                db      20 dup (?)
+    numG                db      20 dup (?)
+    numAT               db      20 dup (?)
+    numCG               db      20 dup (?)
+    ;;string auxiliar
+    strAux              db      20 dup (?)
+    ;;outras variaveis 
+    deslocamento        dw      0               ;representa o deslocamento para ler o proximo byte do arquivo            
+    contLoopGroup       dw      0               ;contador para o looping principal do programa, cada incremento representa uma linha do arquivo de saida
+    currentLine         dw      1               ;linha atual do arquivo de entrada  [NAO IMPLEMENTADO]
 
 .code
 .startup
     
-    ;;separa cada informacao da linha de comando em variaveis diferentes
+;----------------------------------------------------------------------------------------
+;----------------------------------------- MAIN -----------------------------------------
+;----------------------------------------------------------------------------------------
     call    getCommandLine  ;salva string digitada na linha de comando na variavel commandLine
+    
     call    getFileNameIn   ;salva nome do arquivo de entrada em fileNameIn
+
+    ;;verifica se fileNameIn esta vazio
+    mov     al,[fileNameIn] 
+    cmp     al,0           
+    jne     fileInNotEmpty      
+    mov     flagFileInEmpty,1
+    fileInNotEmpty:
+
     call    getFileNameOut  ;salva nome do arquivo de saida em fileNameOut
+
+    cmp     flagNoFileOut,0
+    jne     fileOutNotEmpty
+
+    ;;verifica se fileNameOut esta vazio
+    mov     al,[fileNameOut] 
+    cmp     al,0           
+    jne     fileOutNotEmpty      
+    mov     flagFileOutEmpty,1
+    fileOutNotEmpty:
+    
     call    getNumLet       ;salva numero do grupo de letras em fileNumLet e codigo atcg em fileAtcg
     
-    call    openFile    ;abre arquivo fileNameIn
+    ;;se o arquivo de entrada ou de saida nao foi informado encerra o programa e imprime mensagem na tela
+    cmp     flagFileInEmpty,1
+    je      fimfim
+    cmp     flagFileOutEmpty,1
+    je      fimfim
 
+    call    openFile        ;abre arquivo fileNameIn
+
+    ;;fileIntNumLet = atoi(fileNumLet)
     lea     bx,fileNumLet
     call    atoi
     mov     fileIntNumLet,ax
 
-    ;;loop que le e faz a contagem das primeiras n letras (n=fileIntNumLet)
-    loopFirstGroup: 
-    ;;
-    inc     contLoopFirstGroup
-    mov     ax,contLoopFirstGroup
+    ;;loop principal do programa (cada looping representa um grupo de letras)
+    loopGroup: 
+    ;;testa se leu N letras (N = fileIntNumLet)
+    inc     contLoopGroup
+    mov     ax,contLoopGroup
     mov     bx,fileIntNumLet
-    cmp     ax,bx;
-    je      fimLoopFirstGroup 
+    cmp     ax,bx
+    je      fimLoopGroup 
     
-    ;;le proximo byte do arquivo e verifica se chegou ao fim
-    call    readFile    
+    ;;le proximo byte do arquivo e verifica se chegou ao fim do arquivo
+    call    readFile
     cmp     ax,0
     je      fim
     
+    ;;verifica qual foi o byte lido
     cmp     fileByteBuffer,'A'
     je      incA
     cmp     fileByteBuffer,'T'
@@ -84,49 +139,252 @@
     je      incC
     cmp     fileByteBuffer,'G'
     je      incG
+    dec     contLoopGroup   ;decrementa em 1 o contador principal quando há CRLF
     cmp     fileByteBuffer,CR
-    je      loopFirstGroup
+    je      loopGroup
     cmp     fileByteBuffer,LF
-    je      loopFirstGroup
+    je      loopGroup
 
-    jmp     fim ;TODO: erro se nao for A,T,C ou G
+    jmp     fakeChar        ;char nao reconhecido no arquivo de entrada
 
+    ;incrementa o contador da letra lida
     incA:
     inc     counterA
-    jmp     loopFirstGroup
+    jmp     loopGroup
     incT:
     inc     counterT
-    jmp     loopFirstGroup
+    jmp     loopGroup
     incC:
     inc     counterC
-    jmp     loopFirstGroup
+    jmp     loopGroup
     incG:
     inc     counterG
-    jmp     loopFirstGroup
+    jmp     loopGroup
     
-    fimLoopFirstGroup:
+    fimLoopGroup:
     
-    call    printGroup  
+    call    itoaCounters   ;converte contadores em strings para poder imprimir no arquivo de saida
 
-    lea     bx,vacuo
-    call    printf_s
-    lea     bx,vacuo
-    call    printf_s
+    ;###### inicio impressao no arquivo de saida
+    push bx
+    
+    cmp     flagNoFileOut,0
+    je      openFileOut
+    ;;abre arquivo de saida default
+    mov ah, 3dh           
+    lea dx, noFileName   
+    mov al, 1              
+    int 21h 
+    jmp fimOpenFileOut
+    ;;abre arquivo de saida informado na linha de comando
+    openFileOut:
+    mov ah, 3dh           
+    lea dx, fileNameOut   
+    mov al, 1              
+    int 21h              
+
+    fimOpenFileOut:
+    mov bx, ax             ; bx = handle do arquivo 
+
+    ;;escreve o cabecalho antes de iniciar a impressao das contagens de atcg, por exemplo: A;T;C;G;A+T;C+G
+    mov ax,deslocamento
+    cmp ax,0
+    jne notFirst
+    cmp flagA,0
+    je  skipHeadA
+    mov ah, 40h             
+    lea dx, headerA          
+    mov cx, 2                
+    int 21h 
+    skipHeadA:
+    cmp flagT,0
+    je  skipHeadT
+    mov ah, 40h             
+    lea dx, headerT          
+    mov cx, 2                
+    int 21h 
+    skipHeadT:
+    cmp flagC,0
+    je  skipHeadC
+    mov ah, 40h             
+    lea dx, headerC          
+    mov cx, 2                
+    int 21h 
+    skipHeadC:
+    cmp flagG,0
+    je  skipHeadG
+    mov ah, 40h             
+    lea dx, headerG          
+    mov cx, 2                
+    int 21h 
+    skipHeadG:
+    cmp flagPlus,0
+    je  skipHeadPlus
+    mov ah, 40h             
+    lea dx, headerPlus1          
+    mov cx, 4                
+    int 21h 
+    mov ah, 40h             
+    lea dx, headerPlus2          
+    mov cx, 5                
+    int 21h 
+    skipHeadPlus:
+
+    notFirst:
+    mov ah, 42h            ; Código da função para posicionar o cursor
+    mov al, 2              ; Modo de posição (00h start of file - 01h current file position - 02h end of file)
+    mov dx, 0              ; deslocamento 
+    mov cx, 0              ; Alta parte do offset (zerada)
+    int 21h 
+    
+    mov ah, 40h             
+    lea dx, msgCRLF          
+    mov cx, 2                
+    int 21h     
+
+    ;;; A ;;;
+    cmp flagA,0
+    je  insertT
+    mov ah, 40h             
+    lea dx, numA             
+    mov cx, 3                
+    int 21h    
+    mov ah, 40h             
+    lea dx, semicolon        
+    mov cx, 1                
+    int 21h   
+
+    ;;; T ;;;
+    insertT:
+    cmp flagT,0
+    je  insertC
+    mov ah, 40h             
+    lea dx, numT            
+    mov cx, 3                
+    int 21h     
+    mov ah, 40h             
+    lea dx, semicolon        
+    mov cx, 1                
+    int 21h   
+
+    ;;; C ;;;
+    insertC:
+    cmp flagC,0
+    je  insertG
+    mov ah, 40h             
+    lea dx, numC           
+    mov cx, 3                
+    int 21h   
+    mov ah, 40h             
+    lea dx, semicolon        
+    mov cx, 1                
+    int 21h   
+
+    ;;; G ;;;
+    insertG:
+    cmp flagG,0
+    je  insertPlus
+    mov ah, 40h             
+    lea dx, numG            
+    mov cx, 3                
+    int 21h  
+    mov ah, 40h             
+    lea dx, semicolon        
+    mov cx, 1                
+    int 21h   
+
+    ;;; AT ;;;
+    insertPlus:
+    cmp flagPlus,0
+    je  skipPlus
+    mov ah, 40h             
+    lea dx, numAT            
+    mov cx, 4                
+    int 21h  
+    mov ah, 40h             
+    lea dx, semicolon        
+    mov cx, 1                
+    int 21h   
+        
+    ;;; CG ;;;
+    mov ah, 40h             
+    lea dx, numCG            
+    mov cx, 4                
+    int 21h  
+    
+    skipPlus:
+    ;;fecha arquivo de saida
+    mov ah, 3Eh           
+    int 21h                
+
+    pop bx
+    ;###### fim impressao no arquivo de saida
 
     ;;desloca o cursor de leitura para o proximo byte do arquivo
     inc     deslocamento
+    mov     ax,0
+    add     ax,deslocamento
+    add     ax,fileIntNumLet
+    cmp     ax,9999
+    je      bigFile
+
     call    incOffsetFile
 
     ;;reseta variaveis de contagem
-    mov     contLoopFirstGroup,-1
+    mov     contLoopGroup,-1 ;TODO: mov contLoopGroup,0
     mov     counterA,0
     mov     counterT,0
     mov     counterC,0
     mov     counterG,0
 
-    jmp     loopFirstGroup
-fim:
+    jmp     loopGroup
+
+    fakeChar:
+    ;;detectado caractere incorreto no arquivo de entrada
+    lea     bx,strLetError1
+    call    printf_s
+    lea     bx,fileByteBuffer
+    call    printf_s
+    lea     bx,strLetError2
+    call    printf_s
+
+    jmp     fimfimfim
+
+    bigFile:
+    lea     bx,bigFilePrint
+    call    printf_s
+    jmp     fimfimfim
+
+    fim:    
+    ;;verifica se o arquivo é muito pequeno
+    inc     contLoopGroup
+    mov     ax,contLoopGroup
+    mov     bx,fileIntNumLet
+    cmp     ax,bx
+    je      fimfim
+    lea     bx,smallFilePrint
+    call    printf_s   
+    lea     bx,fileNumLet
+    call    printf_s
+
+    fimfim:
+    ;;verifica se arquivo de entrada ou de saida houve erro na linha de comando
+    cmp     flagFileInEmpty,1
+    jne     fimFileInNotEmpty
+    lea     bx,msgFileInEmpty
+    call    printf_s
+    fimFileInNotEmpty:
+    cmp     flagFileOutEmpty,1
+    jne     fimFileOutNotEmpty
+    lea     bx,msgFileOutEmpty
+    call    printf_s
+    fimFileOutNotEmpty:
+    fimfimfim: 
 .exit
+;----------------------------------------------------------------------------------------
+;-------------------------------------- FUNCTIONS ---------------------------------------
+;----------------------------------------------------------------------------------------
+
 ;----------------------------------------------------------------------
 ;Funcao que salva string da linha de comando na variavel commandLine
 ;----------------------------------------------------------------------
@@ -150,7 +408,7 @@ getCommandLine    endp
 ;
 ;----------------------------------------------------------------------
 ;Funcao que imprime string na tela
-;------------------------------------------atcg----------------------------
+;----------------------------------------------------------------------
 printf_s	proc	near
 	mov		dl,[bx]
 	cmp		dl,0
@@ -221,7 +479,7 @@ getFileNameOut  proc    near
     loopHifenOut:
     LODSB
     cmp     al,0 
-    je      fimGetFileNameOut  
+    je      notFoundFileOut
     mov     auxdb,al
     cmp     auxdb,'-'
     je      hifenOut
@@ -248,6 +506,14 @@ getFileNameOut  proc    near
     add     bp,1
 
     jmp     loopLeFileOut
+    notFoundFileOut:
+    mov flagNoFileOut,1
+
+    ;cria arquivo a.out
+    mov ah, 3Ch                
+    lea dx, noFileName        
+    mov cx, 0                 
+    int 21h                   
 
     fimGetFileNameOut:	
     ret
@@ -255,7 +521,7 @@ getFileNameOut  proc    near
 getFileNameOut  endp
 ;
 ;--------------------------------------------------------------------
-;Funcao que salva o numero do grupo de letras & codigo atcg+
+;Funcao que salva o numero do grupo de letras e o codigo atcg
 ;--------------------------------------------------------------------
 getNumLet   proc    near
     mov     SI, OFFSET commandLine
@@ -292,22 +558,49 @@ getNumLet   proc    near
     jmp     loopLeFileNum
 
     fimGetNumLet:
-    lea     BP,fileAtcg
+    ;lea     BP,fileAtcg
     loopNumLet:
     LODSB
     ;LODSB
-    ;TO DO: precisa sair do looping e retornar algum erro caso seja digitado -n e nao seja digitada o codigo atcg, caso contrario entrara em looping infinito
+    ;TODO: precisa sair do looping e retornar algum erro caso seja digitado -n e nao seja digitada o codigo atcg, caso contrario entrara em looping infinito
     mov     auxdb,al
     cmp     auxdb,'-'
-    jne     loopNumLet
+    jne     loopNumLet ;TODO: aqui deveria ter um jmp pra um erro
     loopAtcgRead:
     LODSB
     mov     auxdb,al
     cmp     auxdb,' '
     je      fimfimGetNumLet
-    mov     [BP],al
-    add     bp,1
-    jmp     loopAtcgRead    
+    cmp     auxdb,'a'
+    je      flagAon
+    cmp     auxdb,'t'
+    je      flagTon
+    cmp     auxdb,'c'
+    je      flagCon
+    cmp     auxdb,'g'
+    je      flagGon
+    cmp     auxdb,PL
+    je      flagPlusOn
+    retFlag:
+    ;mov     [BP],al
+    ;add     bp,1
+    jmp     fimfimGetNumLet   
+
+    flagAon:
+    mov     flagA,1
+    jmp     loopAtcgRead
+    flagTon:
+    mov     flagT,1
+    jmp     loopAtcgRead
+    flagCon:
+    mov     flagC,1
+    jmp     loopAtcgRead
+    flagGon:
+    mov     flagG,1
+    jmp     loopAtcgRead
+    flagPlusOn:
+    mov     flagPlus,1
+    jmp     loopAtcgRead
 
     fimfimGetNumLet:
     ret
@@ -320,9 +613,20 @@ openFile    proc    near
     lea		dx,fileNameIn
     mov		ah,3dh  
     int		21h
+
+    jc      fileNotFound
+
     mov		fileHandle,ax  
     
     mov		bx,fileHandle
+    jmp     fimOpenFile
+
+    fileNotFound:
+    lea     bx,fileNameIn
+    call    printf_s
+    lea     bx,naoEncontrado
+    call    printf_s
+fimOpenFile:
 ret
 openFile    endp
 ;
@@ -339,7 +643,7 @@ ret
 readFile    endp
 ;
 ;--------------------------------------------------------------------
-; Recebe um inteiro/posicao no AX e salva em firstChar o char correspondente a essa posicao
+; Funcao de deslocamento do cursor no arquivo
 ;--------------------------------------------------------------------
 incOffsetFile    proc    near
     
@@ -364,36 +668,20 @@ incOffsetFile    endp
 ;--------------------------------------------------------------------
 atoi	proc near
 
-		; A = 0;
 		mov		ax,0
-		
 atoi_2:
-		; while (*S!='\0') {
 		cmp		byte ptr[bx], 0
 		jz		atoi_1
-
-		; 	A = 10 * A
 		mov		cx,10
 		mul		cx
-
-		; 	A = A + *S
 		mov		ch,0
 		mov		cl,[bx]
 		add		ax,cx
-
-		; 	A = A - '0'
 		sub		ax,'0'
-
-		; 	++S
 		inc		bx
-		
-		;}
 		jmp		atoi_2
-
 atoi_1:
-		; return
 		ret
-
 atoi	endp
 ;
 ;----------------------------------------------------------------------
@@ -403,7 +691,7 @@ atoi	endp
 ;----------------------------------------------------------------------
 itoa proc near
     mov cx, 10
-    mov bx, di             ; Salva o endereço da string em BX
+    mov bx, di             ; salva o endereço da string em BX
 
 itoa_loop:
     xor dx, dx
@@ -418,7 +706,7 @@ itoa_loop:
 
     mov [di], 0
 
-    ; Inverte a string
+    ;;inverte a string
     dec di
 
 itoa_reverse_loop:
@@ -457,33 +745,23 @@ itoaCounters proc near
     mov ax, counterG
     call itoa 
 
+    mov ax,0
+    add ax,counterA
+    add ax,counterT
+    mov counterAT,ax
+    mov ax,0
+    add ax,counterC
+    add ax,counterG
+    mov counterCG,ax
+
+    lea di, numAT          
+    mov ax, counterAT
+    call itoa 
+    lea di, numCG          
+    mov ax, counterCG
+    call itoa 
+
     ret
 itoaCounters endp
-;----------------------------------------------------------------------
-; Imprime linha de contagem do grupo de letras atual
-;----------------------------------------------------------------------
-printGroup proc near
-
-call    itoaCounters
-    lea     bx,numA
-    call    printf_s 
-    lea     bx,semicolon
-    call    printf_s   
-    lea     bx,numT
-    call    printf_s 
-    lea     bx,semicolon
-    call    printf_s    
-    lea     bx,numC
-    call    printf_s 
-    lea     bx,semicolon
-    call    printf_s   
-    lea     bx,numG
-    call    printf_s
-
-    ret
-printGroup endp
 ;
-;----------------------------------------------------------------------
-; 
-;----------------------------------------------------------------------
 end
